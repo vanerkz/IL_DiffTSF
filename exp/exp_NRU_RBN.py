@@ -166,8 +166,8 @@ class Exp_NRU_RBN(Exp_Basic):
         if os.path.exists(best_model_path):
             print("load:",setting)
             self.model.load_state_dict(torch.load(best_model_path))
-            train1=False
-            early_stopping.early_stop =True
+            #train1=True
+            #early_stopping.early_stop =True
         else:
              print("No File, Train new")
         
@@ -364,10 +364,9 @@ class Exp_NRU_RBN(Exp_Basic):
                     sigmaouts=sigma.detach().cpu().numpy()
                 else:
                     sigmaouts=np.concatenate((sigmaouts,sigma.detach().cpu().numpy()),axis=0)
-                pred=pred[:,-self.args.pred_len:,:].squeeze()
+                pred=pred[:,-self.args.pred_len:,:]
             
             true=true[:,-self.args.pred_len:,:self.args.c_out]
-            print(true.shape)
             if data_stamp is None:
                 data_stamp=data_stamp_batch.detach().cpu().numpy()
             else:

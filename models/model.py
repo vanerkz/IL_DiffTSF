@@ -94,7 +94,22 @@ class Denoiser(nn.Module):
 
 
         return y
+def cosine_schedule(n_times, s=0.008, device='cpu'):
+    steps = n_times + 1
+    x = torch.linspace(0, n_times, steps, device=device)
     
+    # Compute alpha_bar (cumulative product of alphas)
+    alpha_bars = torch.cos(((x / n_times) + s) / (1 + s) * math.pi * 0.5) ** 2
+    alpha_bars = alpha_bars / alpha_bars[0]  # Normalize to start at 1
+
+    alpha_bars = alpha_bars[1:]  # length = n_times
+    alphas = alpha_bars[1:] / alpha_bars[:-1]
+    alphas = torch.cat([alpha_bars[:1], alphas])  # length = n_times
+    betas = 1 - alphas
+
+    return alphas, alpha_bars, betas
+
+  
 class Diffusion(nn.Module):
     def __init__(self, model, n_times,featurein, input_size,pred_len,label_len,d_ff,beta_minmax=[1e-4, 2e-2],freq='t', device='cuda'):
     
@@ -109,12 +124,19 @@ class Diffusion(nn.Module):
         self.d_ff=d_ff
         # define linear variance schedule(betas)
         beta_1, beta_T = beta_minmax
-        self.sqrt_betas = torch.sqrt(torch.linspace(start=beta_1, end=beta_T, steps=n_times).to(device))      
+        self.alphas, alpha_bars, self.betas = cosine_schedule(n_times, device=device)
+        #betas = cosine_beta_schedule(n_times).to(device)
+        self.sqrt_betas = torch.sqrt(self.betas)
+        #self.sqrt_betas = torch.sqrt(betas)
+        #self.sqrt_betas = torch.sqrt(torch.linspace(start=beta_1, end=beta_T, steps=n_times).to(device))      
         # define alpha for forward diffusion kernel
-        self.alphas = 1 - torch.linspace(start=beta_1, end=beta_T, steps=n_times).to(device)
+        #self.alphas = 1 - torch.linspace(start=beta_1, end=beta_T, steps=n_times).to(device)
         self.sqrt_alphas = torch.sqrt(self.alphas)
-        self.sqrt_one_minus_alpha_bars = torch.sqrt(1-torch.cumprod(self.alphas, dim=0))
-        self.sqrt_alpha_bars = torch.sqrt(torch.cumprod(self.alphas, dim=0)).to(device)
+        #self.sqrt_one_minus_alpha_bars = torch.sqrt(1-torch.cumprod(self.alphas, dim=0))
+        #self.sqrt_alpha_bars = torch.sqrt(torch.cumprod(self.alphas, dim=0)).to(device)
+        self.sqrt_alphas = torch.sqrt(self.alphas)
+        self.sqrt_alpha_bars = torch.sqrt(alpha_bars)
+        self.sqrt_one_minus_alpha_bars = torch.sqrt(1 - alpha_bars)
         self.device = device
         self.MLP2=nn.Linear(input_size, d_ff)
         self.MLP2.weight=nn.init.orthogonal_(self.MLP2.weight)
@@ -336,15 +358,15 @@ class NRU_RBN(nn.Module):
         freq_map = {'h':4, 't':5, 's':6, 'm':1, 'a':1, 'w':2, 'd':3, 'b':3, 'e':0}
         timefeatureNos = freq_map[freq]
         self.timefeatureNos=timefeatureNos
-        beta_minmax=[1e-4, 0.01]
+        beta_minmax=[1e-4, 0.02]
         n_layers =4
         hidden_dim = d_model
         hidden_dims = [hidden_dim for _ in range(n_layers)]
 
         if isinstance(beta_init, np.ndarray):
-            self._beta = beta_init
+            self._beta = 1e-4
         else:
-            self._beta = 0
+            self._beta = 1e-4
         
         self.model = Denoiser(image_resolution=(self.pred_len,d_ff, 2),
                  hidden_dims=hidden_dims, 
