@@ -1,0 +1,4 @@
+Diff_TS_168_24_dETTm2_ftM_sl168_ll168_pl24_dm256_df256_ebtimeF_0_lossreg_True_n_times_100_ii_0.1
+['0_predlen:24,CRPS_L:1,AVE:0.151±0.0']
+['0_predlen:24,MSE_L:1,AVE:0.087±0.0']
+['0_predlen:24,MAE_L:1,AVE:0.206±0.0']

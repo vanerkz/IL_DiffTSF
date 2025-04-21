@@ -1,24 +1,22 @@
 from data.data_loader import Dataset_ETT_hour,Dataset_ETT_day,Dataset_ETT_minute
 from exp.exp_basic import Exp_Basic
 from models.model import NRU_RBN, Estimator
-from utils_NRU_RBN.tools import EarlyStopping, adjust_learning_rate
-from utils_NRU_RBN.metrics import metric
+from utils_NRU_RBN.tools import EarlyStopping,adjust_learning_rate
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
 from torch import optim
-from torch.utils.data import DataLoader,Sampler
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 from tqdm.notebook import tqdm
 import matplotlib.pyplot as plt
 import os
 import time
 from utils_NRU_RBN.common_utils import commonmetric
-from utils_NRU_RBN.tools import loss_fn_sigma,minmax,loss_fn,loss_quantlie
+from utils_NRU_RBN.tools import loss_fn_sigma,loss_fn
 from  utils_NRU_RBN.crps import crps_gaussian,crps_ensemble
 import warnings
-import matplotlib.dates as mdates
 warnings.filterwarnings('ignore')
 
 class Exp_NRU_RBN(Exp_Basic):
@@ -32,33 +30,22 @@ class Exp_NRU_RBN(Exp_Basic):
         if self.args.model=='Diff_TS':
             model = model_dict[self.args.model](
                 self.args.enc_in,
-                self.args.dec_in, 
                 self.args.c_out, 
-                self.args.seq_len, 
                 self.args.label_len,
                 self.args.pred_len,
                 self.args.n_times, 
                 self.args.d_model, 
-                self.args.d_ff,
-                self.args.dropout, 
-                self.args.embed,
                 self.args.freq,
-                self.args.activation,
-                self.args.output_attention,
-                self.args.likeloss,
                 self.device
             ).float()
 
             estimatormodel = Estimator(
                 self.args.enc_in,
-                self.args.dec_in, 
                 self.args.c_out, 
-                self.args.seq_len, 
                 self.args.label_len,
                 self.args.pred_len,
                 self.args.freq, 
                 self.args.d_model, 
-                self.args.d_ff,
                 self.device
             ).float()
 
@@ -81,10 +68,10 @@ class Exp_NRU_RBN(Exp_Basic):
             'ETTm2':Dataset_ETT_minute,
         }
         Data = data_dict[self.args.data]
-        timeenc = 0 if args.embed!='timeF' else 1
+        timeenc = 1
 
         if flag == 'test':
-            shuffle_flag = False; drop_last = False; batch_size = args.batch_size//2; freq=args.freq
+            shuffle_flag = False; drop_last = False; batch_size = args.batch_size; freq=args.freq
         elif flag =='val':
             shuffle_flag = False; drop_last = False; batch_size = args.batch_size; freq=args.freq
         else:
@@ -94,13 +81,12 @@ class Exp_NRU_RBN(Exp_Basic):
             root_path=args.root_path,
             data_path=args.data_path,
             flag=flag,
-            size=[args.seq_len, args.label_len, args.pred_len],
+            size=[args.label_len, args.pred_len],
             features=args.features,
             target=args.target,
             inverse=args.inverse,
             timeenc=timeenc,
-            freq=freq,
-            cols=args.cols
+            freq=freq
         )
         print(flag, len(data_set))
         data_loader = DataLoader(
@@ -122,7 +108,7 @@ class Exp_NRU_RBN(Exp_Basic):
         criterion =  nn.MSELoss() 
         return criterion
 
-    def vali(self, vali_data, vali_loader,flag,denoisebool,epoch):
+    def vali(self, vali_data, vali_loader,flag,denoisebool):
         self.model.eval()
         self.estimatormodel.eval()
         datalosslist=[]
@@ -131,11 +117,11 @@ class Exp_NRU_RBN(Exp_Basic):
         total_loss2 = []
         crps_total=[]
         for i, (batch_x,batch_y,batch_x_mark,batch_y_mark,_) in enumerate(tqdm(vali_loader)):
-            pred, true,epsilon, pred_epsilon, x_zeros,noisy_label,_,matrixout,nonnmatrix,m2w= self._process_one_batch(vali_data, batch_x, batch_y, batch_x_mark, batch_y_mark,flag)
+            pred, true,epsilon, pred_epsilon, x_zeros,_,matrixout,nonnmatrix,m2w= self._process_one_batch(batch_x, batch_y, batch_x_mark, batch_y_mark,flag)
             if denoisebool:
                 sigmaout=self.estimatormodel(nonnmatrix.detach(),batch_y_mark.float().to(self.device))
             if flag != 'test':
-                loss,dataloss,regloss=loss_fn_sigma(epsilon,pred_epsilon,m2w,epoch,self.args.reg)
+                loss,dataloss,regloss=loss_fn_sigma(epsilon,pred_epsilon,m2w,self.args.reg)
                 total_loss.append(loss.item())
                 reglosslist.append(regloss.item())
                 datalosslist.append(dataloss.item())
@@ -161,13 +147,10 @@ class Exp_NRU_RBN(Exp_Basic):
         best_model_pathest = os.path.join(path,setting+'est.pth')
         early_stopping = EarlyStopping(patience=self.args.patience, verbose=True)
         early_stopping2 = EarlyStopping(patience=self.args.patience, verbose=True)
-        sample =self.args.sampling
         train1=True
         if os.path.exists(best_model_path):
             print("load:",setting)
             self.model.load_state_dict(torch.load(best_model_path))
-            #train1=True
-            #early_stopping.early_stop =True
         else:
              print("No File, Train new")
         
@@ -179,15 +162,9 @@ class Exp_NRU_RBN(Exp_Basic):
            
         time_now = time.time()
         train_steps = len(train_loader)
-
         
         model_optim,estimatormodel_optim= self._select_optimizer()
-        criterion =  self._select_criterion()
-        if self.args.use_amp:
-            scaler = torch.cuda.amp.GradScaler()
         
-        train2 =True
-        setbool=True
         self.model.train()
         self.estimatormodel.train()
         epoch=0
@@ -197,35 +174,26 @@ class Exp_NRU_RBN(Exp_Basic):
         tvalepochloss=[]
         tvaldataloss=[]
         tvalregloss=[]
-        while(epoch<self.args.train_epochs):
-            if epoch== self.args.train_epochs-1 and not early_stopping.early_stop:
-                if not sample:
-                    epoch=0
-                    early_stopping.early_stop=True
-                    train1=False
-                else:
-                    early_stopping.early_stop=False
-                    train1=False
 
-            iter_count = 0
+        model_optim.zero_grad()
+        estimatormodel_optim.zero_grad()
+        iter_count=0
+        while(epoch<self.args.train_epochs):
             train_loss = []
             data_loss = []
             reg_loss = []
-            
-            epoch_time = time.time()
-            model_optim.zero_grad()
-            estimatormodel_optim.zero_grad()
-            for i, (batch_x,batch_y,batch_x_mark,batch_y_mark,_) in enumerate(tqdm(train_loader) ):
+            for i, (batch_x,batch_y,batch_x_mark,batch_y_mark,_) in enumerate(tqdm(train_loader)):
                 iter_count += 1
                 if train1:
+                    self.model.train()
                     state='train'
                 else:
-                    self.model.load_state_dict(torch.load(best_model_path))
                     self.model.eval()
                     state='val'
-                pred, true,epsilon, pred_epsilon, x_zeros,noisy_label,_,matrixout,nonnmatrix,m2w= self._process_one_batch(train_data, batch_x, batch_y, batch_x_mark, batch_y_mark,state)
-                loss,dataloss,regloss=loss_fn_sigma(epsilon,pred_epsilon,m2w,epoch,self.args.reg)
+                pred, true,epsilon, pred_epsilon, x_zeros,_,matrixout,nonnmatrix,m2w= self._process_one_batch(batch_x, batch_y, batch_x_mark, batch_y_mark,state)
+                
                 if train1:
+                    loss,dataloss,regloss=loss_fn_sigma(epsilon,pred_epsilon,m2w,self.args.reg)
                     loss.backward()
                     if (i+1) % kstep == 0 or (i+1) == len(train_loader):
                         model_optim.step()  # update the weights only after accumulating k small batches
@@ -235,10 +203,6 @@ class Exp_NRU_RBN(Exp_Basic):
                     data_loss.append(dataloss.item())
                     reg_loss.append(regloss.item())
                 else:
-                    self.model.eval()
-                
-                if not train1:
-                    
                     self.estimatormodel.train()
                     sigmaout=self.estimatormodel(nonnmatrix.detach(),batch_y_mark.float().to(self.device))
                     loss2=loss_fn(sigmaout,true[:,:,:self.args.c_out],x_zeros.detach(),self.args.pred_len)
@@ -250,48 +214,32 @@ class Exp_NRU_RBN(Exp_Basic):
             speed = (time.time()-time_now)/iter_count
             left_time = speed*((self.args.train_epochs - epoch)*train_steps - i)
             print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
-            iter_count = 0
-            time_now = time.time()
-            print("Epoch: {} cost time: {}".format(epoch+1, time.time()-epoch_time))
             train_loss = np.average(train_loss)
             data_loss = np.average(data_loss)
             reg_loss = np.average(reg_loss)
             tepochloss.append(train_loss)
             tdataloss.append(data_loss)
             tregloss.append(reg_loss)
-            vali_loss,vali_loss2,crps_total,valdatalosslist,valreglosslist = self.vali(vali_data, vali_loader,"val",not train1,epoch)
+
+            vali_loss,vali_loss2,crps_total,valdatalosslist,valreglosslist = self.vali(vali_data, vali_loader,"val",not train1)
             tvalepochloss.append(vali_loss)
             tvaldataloss.append(valdatalosslist)
             tvalregloss.append(valreglosslist)
 
-            if sample:
-                train1=True
-                early_stopping.save_checkpoint(vali_loss, self.model, best_model_path)
-            elif train1 and not sample:
+            if train1==True:
+
                 early_stopping(vali_loss, self.model, best_model_path)
                 train1 =not early_stopping.early_stop 
-
-            if not train1:
-                early_stopping2(vali_loss2,self.estimatormodel, best_model_pathest)
-                train2=not early_stopping2.early_stop
-
-            if early_stopping.early_stop and setbool:
-                epoch=0
-                setbool=False
-
-            if train1:
-                self.model.train()
                 #adjust_learning_rate(model_optim, epoch + 1, self.args)
-            
-            if train2 and not train1:
-                self.estimatormodel.train()
+            else:
+                early_stopping2(vali_loss2,self.estimatormodel, best_model_pathest)
                 #adjust_learning_rate(estimatormodel_optim, epoch + 1, self.args)
+
             if early_stopping.early_stop and early_stopping2.early_stop:
                 print("Early stopping")
                 break
             epoch+=1
-            
-        #best_model_path = path+setting+'_checkpoint.pth'
+
         self.model.load_state_dict(torch.load(best_model_path))
         try:
             self.estimatormodel.load_state_dict(torch.load(best_model_pathest))
@@ -300,30 +248,20 @@ class Exp_NRU_RBN(Exp_Basic):
         return self.model,tepochloss,tdataloss,tregloss,tvalepochloss,tvaldataloss,tvalregloss
 
 
-    def test(self, setting,evaluate=False,quantliebool=False):
+    def test(self, setting,evaluate=False):
         test_data, test_loader = self._get_data(flag='test')
-        #vali_data, vali_loader = self._get_data(flag = 'val')
         self.model.eval()
-  
         path = self.args.checkpoints
         best_model_path = os.path.join(path,setting+'.pth')
         if evaluate:
             if os.path.exists(best_model_path):
                 print("load:",setting)
                 self.model.load_state_dict(torch.load(best_model_path))
-                if not quantliebool:
-                    best_model_pathest = os.path.join(path,setting+'est.pth')
-                    if os.path.exists(best_model_pathest):
-                        self.estimatormodel.load_state_dict(torch.load(best_model_pathest))
-                    else:
-                        print("no model for estimatormodel")
+                best_model_pathest = os.path.join(path,setting+'est.pth')
+                if os.path.exists(best_model_pathest):
+                    self.estimatormodel.load_state_dict(torch.load(best_model_pathest))
                 else:
-                    best_model_pathest = os.path.join(path,setting+'quantlie.pth')
-                    if os.path.exists(best_model_pathest):
-                        self.quantliemodel.load_state_dict(torch.load(best_model_pathest))
-                    else:
-                        print("no model for quantliemodel")
-
+                    print("no model for estimatormodel")
             else:
                 print("No File")
         preds = None
@@ -340,7 +278,7 @@ class Exp_NRU_RBN(Exp_Basic):
             predsample=None
             if sample:
                 for i in tqdm(range(self.args.sampling_times),leave=False):
-                    pred, true,epsilon, pred_epsilon, x_zeros,noisy_label,batch_yorg,matrixout,nonnmatrix,_= self._process_one_batch(
+                    pred, true,_, _, _,batch_yorg,_,nonnmatrix,_= self._process_one_batch(
                         test_data, batch_x, batch_y, batch_x_mark, batch_y_mark,"test")
                     if predsample is None:
                         predsample=pred.detach().cpu().numpy()
@@ -356,8 +294,7 @@ class Exp_NRU_RBN(Exp_Basic):
                     sigmaouttopfull=np.concatenate((sigmaouttopfull,np.percentile(predsample[:,:,-self.args.pred_len:,:],95, axis=0)),axis=0)
                     sigmaoutbtmfull=np.concatenate((sigmaoutbtmfull,np.percentile(predsample[:,:,-self.args.pred_len:,:],10,axis=0)),axis=0)
             else:
-                pred, true,epsilon, pred_epsilon, x_zeros,noisy_label,batch_yorg,matrixout,nonnmatrix,_= self._process_one_batch(
-                    test_data, batch_x, batch_y, batch_x_mark, batch_y_mark,"test")
+                pred, true,_, _, _,batch_yorg,_,nonnmatrix,_= self._process_one_batch(batch_x, batch_y, batch_x_mark, batch_y_mark,"test")
                 sigmaout=self.estimatormodel(nonnmatrix,batch_y_mark.float().to(self.device))
                 sigma=sigmaout[:,:,:]
                 if sigmaouts is None:
@@ -439,7 +376,7 @@ class Exp_NRU_RBN(Exp_Basic):
         return resultout,crpsret,sqtrue,sqpred,sigmaouts
     
 
-    def _process_one_batch(self, dataset_object, batch_x, batch_y, batch_x_mark, batch_y_mark,flag):
+    def _process_one_batch(self, batch_x, batch_y, batch_x_mark, batch_y_mark,flag):
       batch_yin=torch.tensor(batch_y)
       batch_yorg=torch.tensor(batch_y)
       if flag =='test':
@@ -449,20 +386,12 @@ class Exp_NRU_RBN(Exp_Basic):
       batch_yin = batch_yin.float()
       batch_x_mark = batch_x_mark.float().to(self.device)
       batch_y_mark = batch_y_mark.float().to(self.device)
-      
-      # decoder input
-      dec_inp = batch_y.float().to(self.device)
+
       batch_y = batch_y.float().to(self.device)
       batch_yin = batch_yin.float().to(self.device)
-
-      # encoder - decoder
-      if self.args.use_amp:
-          with torch.cuda.amp.autocast():
-              output,epsilon, pred_epsilon,x_zeros,noisy_label,matrixout,nonnmatrix,m2w= self.model(batch_yin, batch_y_mark,flag)
-      else:
-          output,epsilon, pred_epsilon,x_zeros,noisy_label,matrixout,nonnmatrix,m2w= self.model(batch_yin, batch_y_mark,flag)
+      output,epsilon, pred_epsilon,x_zeros,matrixout,nonnmatrix,m2w= self.model(batch_yin, batch_y_mark,flag)
       batch_y = torch.concat((batch_y,batch_y_mark),2).to(self.device)
       
-      return  output,batch_y,epsilon, pred_epsilon,x_zeros,noisy_label,batch_yorg,matrixout,nonnmatrix,m2w
+      return  output,batch_y,epsilon, pred_epsilon,x_zeros,batch_yorg,matrixout,nonnmatrix,m2w
 
         

@@ -111,21 +111,18 @@ class SinusoidalPosEmb(nn.Module):
         return emb.detach()
 
 class DataEmbedding(nn.Module):
-    def __init__(self, c_in, timeemdnos, d_model,ntimes, embed_type='fixed', freq='h', dropout=0.1):
+    def __init__(self, c_in, timeemdnos, d_model,ntimes, embed_type='fixed', freq='h'):
         super(DataEmbedding, self).__init__()
-        
-        #self.value_embedding = TokenEmbedding(c_in=c_in+timeemdnos, d_model=d_model)
         self.position_embedding = PositionalEmbedding(d_model=d_model)
         self.temporal_embedding = TemporalEmbedding(d_model=d_model, embed_type=embed_type, freq=freq)
         self.diffEmbed = FixedEmbedding(ntimes,d_model)
-        self.dropout = nn.Dropout(p=dropout)
         self.linear=nn.Linear(c_in+timeemdnos,d_model)
         self.timeemdnos=timeemdnos
     def forward(self, x,t):
         if self.timeemdnos==0:
             x =self.linear(x)+self.diffEmbed(t)
         else:
-            x =self.linear(x)+ self.temporal_embedding(x[:,:,-self.timeemdnos:])+self.diffEmbed(t)
+            x =self.linear(x)+self.temporal_embedding(x[:,:,-self.timeemdnos:])+self.diffEmbed(t)
         
         return x
     

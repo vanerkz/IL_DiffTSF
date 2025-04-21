@@ -1,0 +1,4 @@
+Diff_TS_168_24_dexchange_ftM_ll168_pl24_dm256_n_times_100_ii_100
+['0_predlen:24,CRPS_L:1,AVE:0.313±0.0']
+['0_predlen:24,MSE_L:1,AVE:0.229±0.0']
+['0_predlen:24,MAE_L:1,AVE:0.391±0.0']

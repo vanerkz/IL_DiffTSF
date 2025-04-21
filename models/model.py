@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.embed import DataEmbedding,TimeFeatureEmbedding,TemporalEmbedding
+from models.embed import DataEmbedding,TemporalEmbedding
 import numpy as np
 import math
 
@@ -49,7 +49,7 @@ class ConvBlock(nn.Conv2d):
             y=x+time_embedding
         else:
             y = super(ConvBlock, self).forward(x)
-        y = self.group_norm(y) if self.group_norm is not None else y
+        #y = self.group_norm(y) if self.group_norm is not None else y
         y = self.activation_fn(y) if self.activation_fn is not None else y
         
         return y
@@ -66,9 +66,9 @@ class Denoiser(nn.Module):
         
         self.in_project = ConvBlock(img_C, hidden_dims[0], kernel_size=1)
 
-        self.time_project = nn.Sequential(
+        """self.time_project = nn.Sequential(
                                  ConvBlock(diffusion_time_embedding_dim, hidden_dims[0], kernel_size=1, activation_fn=True),
-                                 ConvBlock(hidden_dims[0], hidden_dims[0], kernel_size=1))
+                                 ConvBlock(hidden_dims[0], hidden_dims[0], kernel_size=1))"""
         """for idx in range(1, len(hidden_dims)):
             self.time_project.append(nn.Sequential(
                                  ConvBlock(diffusion_time_embedding_dim, hidden_dims[0], kernel_size=1, activation_fn=True),
@@ -94,24 +94,9 @@ class Denoiser(nn.Module):
 
 
         return y
-def cosine_schedule(n_times, s=0.008, device='cpu'):
-    steps = n_times + 1
-    x = torch.linspace(0, n_times, steps, device=device)
-    
-    # Compute alpha_bar (cumulative product of alphas)
-    alpha_bars = torch.cos(((x / n_times) + s) / (1 + s) * math.pi * 0.5) ** 2
-    alpha_bars = alpha_bars / alpha_bars[0]  # Normalize to start at 1
-
-    alpha_bars = alpha_bars[1:]  # length = n_times
-    alphas = alpha_bars[1:] / alpha_bars[:-1]
-    alphas = torch.cat([alpha_bars[:1], alphas])  # length = n_times
-    betas = 1 - alphas
-
-    return alphas, alpha_bars, betas
-
   
 class Diffusion(nn.Module):
-    def __init__(self, model, n_times,featurein, input_size,pred_len,label_len,d_ff,beta_minmax=[1e-4, 2e-2],freq='t', device='cuda'):
+    def __init__(self, model, n_times, input_size,pred_len,label_len,d_ff,beta_minmax=[1e-4, 2e-2],freq='t', device='cuda'):
     
         super(Diffusion, self).__init__()
         freq_map = {'h':4, 't':5, 's':6, 'm':1, 'a':1, 'w':2, 'd':3, 'b':3, 'e':0}
@@ -122,95 +107,57 @@ class Diffusion(nn.Module):
         self.n_times = n_times
         self.model = model
         self.d_ff=d_ff
-        # define linear variance schedule(betas)
         beta_1, beta_T = beta_minmax
-        self.alphas, alpha_bars, self.betas = cosine_schedule(n_times, device=device)
-        #betas = cosine_beta_schedule(n_times).to(device)
-        self.sqrt_betas = torch.sqrt(self.betas)
-        #self.sqrt_betas = torch.sqrt(betas)
-        #self.sqrt_betas = torch.sqrt(torch.linspace(start=beta_1, end=beta_T, steps=n_times).to(device))      
-        # define alpha for forward diffusion kernel
-        #self.alphas = 1 - torch.linspace(start=beta_1, end=beta_T, steps=n_times).to(device)
-        self.sqrt_alphas = torch.sqrt(self.alphas)
-        #self.sqrt_one_minus_alpha_bars = torch.sqrt(1-torch.cumprod(self.alphas, dim=0))
-        #self.sqrt_alpha_bars = torch.sqrt(torch.cumprod(self.alphas, dim=0)).to(device)
-        self.sqrt_alphas = torch.sqrt(self.alphas)
-        self.sqrt_alpha_bars = torch.sqrt(alpha_bars)
-        self.sqrt_one_minus_alpha_bars = torch.sqrt(1 - alpha_bars)
+        self.sqrt_betas = torch.sqrt(torch.linspace(start=beta_1, end=beta_T, steps=n_times).to(device))      
+        self.alphas = 1 - torch.linspace(start=beta_1, end=beta_T, steps=n_times).to(device)
+        self.sqrt_alphas = torch.sqrt(self.alphas).to(device)
+        self.sqrt_one_minus_alpha_bars = torch.sqrt(1-torch.cumprod(self.alphas, dim=0)).to(device)
+        self.sqrt_alpha_bars = torch.sqrt(torch.cumprod(self.alphas, dim=0)).to(device)
         self.device = device
         self.MLP2=nn.Linear(input_size, d_ff)
         self.MLP2.weight=nn.init.orthogonal_(self.MLP2.weight)
         
-        self.enc_embedding2 = DataEmbedding(self.input_size-timefeatureNos, timefeatureNos, d_ff,self.n_times, "fixed", freq, 0.05)
+        self.enc_embedding = DataEmbedding(self.input_size-timefeatureNos, timefeatureNos, d_ff,self.n_times, "fixed", freq)
+        
         modules = []
-
         hidden_dims = [d_ff,d_ff*2,d_ff*2*2]
         # MLP increase dimensions
         modules.append(
             nn.Sequential(
                     *vanilla_block(hidden_dims[0], hidden_dims[1]),
                     *vanilla_block(hidden_dims[1], hidden_dims[2])))
-
-
         self.encodervar = nn.Sequential(*modules)
-        #self.encodervar = nn.Sequential(*vanilla_block(self.input_size+d_ff,d_ff))
-        # 1D Cnn along h dimenions
+
         kernel_size=3
         dilation=1
         paddingno = kernel_size // 2 * dilation
         self.decoder_input = nn.Conv1d(in_channels=self.label_len, out_channels=pred_len, stride=1, kernel_size=kernel_size,padding=paddingno,dilation=dilation)
-        #self.decoder_input=nn.Linear(self.label_len,self.pred_len)
-        # Decreasing Dimensions
         modules2 = []
         
         modules2.append(
                     nn.Sequential(
                     *vanilla_block(hidden_dims[2], hidden_dims[1]),
                     *vanilla_block(hidden_dims[1], hidden_dims[0],activation=nn.Tanh())))
-
+        
         self.decodervar = nn.Sequential(*modules2)
 
-        #self.decodervar = nn.Linear(d_ff,d_ff)
-    def extract(self, a, t, x_shape):
-        """
-            from lucidrains' implementation
-                https://github.com/lucidrains/denoising-diffusion-pytorch/blob/beb2f2d8dd9b4f2bd5be4719f37082fe061ee450/denoising_diffusion_pytorch/denoising_diffusion_pytorch.py#L376
-        """
-
-        b, *_ = t.shape
-        out = a.gather(-1, t)
-
-        return out.reshape(b, *((1,) * (len(x_shape) - 1)))
-    
-    def scale_to_minus_one_to_one(self, x):
-        # according to the DDPMs paper, normalization seems to be crucial to train reverse process network
-        return x * 2 - 1
-    
-    def reverse_scale_to_zero_to_one(self, x):
-        return (x + 1) * 0.5
-    
     def make_noisy(self, x_zeros, t):
-        # perturb x_0 into x_t (i.e., take x_0 samples into forward diffusion kernels)
         epsilon = torch.randn_like(x_zeros).to(self.device)
-  
         sqrt_alpha_bar = self.extract(self.sqrt_alpha_bars, t, x_zeros.shape)
         sqrt_one_minus_alpha_bar = self.extract(self.sqrt_one_minus_alpha_bars, t, x_zeros.shape)
-        # Let's make noisy sample!: i.e., Forward process with fixed variance schedule
-        #      i.e., sqrt(alpha_bar_t) * x_zero + sqrt(1-alpha_bar_t) * epsilon
         noisy_sample = x_zeros * sqrt_alpha_bar + epsilon * sqrt_one_minus_alpha_bar
         return noisy_sample, epsilon,sqrt_alpha_bar, sqrt_one_minus_alpha_bar
     
     
     def forward(self, x_zeros,flag):
-
         B,_,_=x_zeros.shape
         t = torch.randint(low=0, high=self.n_times-1, size=(B,)).long().to(self.device)
         
         inlabel=x_zeros
         label=inlabel[:,:self.label_len,:]
-        if flag=='train1':
-            self.enc_embedding2.train()
-            for param in self.enc_embedding2.parameters():
+        if flag=='train':
+            self.enc_embedding.train()
+            for param in self.enc_embedding.parameters():
                 param.requires_grad =True
             self.encodervar.train()
             for param in self.encodervar.parameters():
@@ -225,8 +172,8 @@ class Diffusion(nn.Module):
             for param in self.MLP2.parameters():
                 param.requires_grad =True
         else:
-            self.enc_embedding2.eval()
-            for param in self.enc_embedding2.parameters():
+            self.enc_embedding.eval()
+            for param in self.enc_embedding.parameters():
                 param.requires_grad =False
             self.encodervar.eval()
             for param in self.encodervar.parameters():
@@ -241,7 +188,7 @@ class Diffusion(nn.Module):
             for param in self.MLP2.parameters():
                 param.requires_grad =False
 
-        embedlabel2=self.enc_embedding2(label,t.unsqueeze(1).repeat_interleave(self.label_len, dim=1))
+        embedlabel2=self.enc_embedding(label,t.unsqueeze(1).repeat_interleave(self.label_len, dim=1))
         result = self.encodervar(embedlabel2)
         resaroutnew=self.decoder_input(result)
         context = self.decodervar(resaroutnew)
@@ -249,11 +196,10 @@ class Diffusion(nn.Module):
         x_zeros=self.MLP2(inlabel[:,-self.pred_len:,:])
         x_zeros=torch.tanh(x_zeros)
 
-        
         perturbed_images,epsilon, sqrt_alpha_bar, sqrt_one_minus_alpha_bar  = self.make_noisy(x_zeros, t)
     
 
-        if flag=='train1':
+        if flag=='train':
             self.model.train()
             for param in self.model.parameters():
                 param.requires_grad =True
@@ -266,7 +212,6 @@ class Diffusion(nn.Module):
         nonnmatrix=nonnmatrix.clamp(min=-0.9999,max=0.9999)
         pred_epsilon=pred_epsilon.squeeze(1)
         matrixout=perturbed_images.clamp(min=-0.9999,max=0.9999)
-        #nonnmatrix=self.reverse_scale_to_zero_to_one(nonnmatrix)
         x_t=torch.atanh(nonnmatrix)
         w=self.MLP2.weight
         b=self.MLP2.bias
@@ -274,19 +219,21 @@ class Diffusion(nn.Module):
         invw=torch.linalg.pinv(w).transpose(0,1)
         x_0=torch.matmul(x_0,invw)
         x_zerostemp=x_0
-        noisy_label=0
             
-        return epsilon, pred_epsilon,x_zerostemp,noisy_label,matrixout,nonnmatrix,m2w
+        return epsilon, pred_epsilon,x_zerostemp,matrixout,nonnmatrix,m2w
 
+
+    def extract(self, a, t, x_shape):
+        b, *_ = t.shape
+        out = a.gather(-1, t)
+        return out.reshape(b, *((1,) * (len(x_shape) - 1)))
     
     def denoise_at_t(self, t,tt,x_t,context):
         if tt > 1:
             z = torch.randn_like(x_t).to(self.device)
         else:
             z = torch.zeros_like(x_t).to(self.device)
-        
-        # at inference, we use predicted noise(epsilon) to restore perturbed data sample.
-        
+
         self.model.eval()
         for param in self.model.parameters():
                 param.requires_grad =False
@@ -298,27 +245,23 @@ class Diffusion(nn.Module):
         sqrt_alpha = self.extract(self.sqrt_alphas, t, x_t.shape)
         sqrt_one_minus_alpha_bar = self.extract(self.sqrt_one_minus_alpha_bars, t, x_t.shape)
         sqrt_beta = self.extract(self.sqrt_betas, t, x_t.shape)
-        
-        # denoise at time t, utilizing predicted noise
+    
         x_t_minus_1 = 1 / sqrt_alpha * (x_t - (1-alpha)/sqrt_one_minus_alpha_bar*epsilon_pred) + sqrt_beta*z
 
         return x_t_minus_1.clamp(min=-0.9999,max=0.9999)
                 
-    def sample(self, N,inlabel):
-        # start from random noise vector, x_0 (for simplicity, x_T declared as x_t instead of x_T)
-        #fig = plt.figure(figsize=(10, 7))         
+    def sample(self, N,inlabel):       
         x_t = torch.randn((N, self.pred_len, self.d_ff)).to(self.device)
         for t in range(self.n_times-1, -1, -1): 
-                torch.cuda.empty_cache()
-                tt = torch.tensor([t]).repeat_interleave(N, dim=0).long().to(self.device)
-                label=inlabel[:,:self.label_len,:]
-                embedlabel2=self.enc_embedding2(label,tt.unsqueeze(1).repeat_interleave(self.label_len, dim=1))
-                result = self.encodervar(embedlabel2)
-                resaroutnew=self.decoder_input(result)
-                context = self.decodervar(resaroutnew)
-                x_t = self.denoise_at_t(tt,t,x_t,context)
-                
-        #x_t=self.reverse_scale_to_zero_to_one(x_t)
+            torch.cuda.empty_cache()
+            tt = torch.tensor([t]).repeat_interleave(N, dim=0).long().to(self.device)
+            label=inlabel[:,:self.label_len,:]
+            embedlabel=self.enc_embedding(label,tt.unsqueeze(1).repeat_interleave(self.label_len, dim=1))
+            result = self.encodervar(embedlabel)
+            resaroutnew=self.decoder_input(result)
+            context = self.decodervar(resaroutnew)
+            x_t = self.denoise_at_t(tt,t,x_t,context)
+
         matrixout=x_t
         x_t=torch.atanh(x_t)
         w=self.MLP2.weight
@@ -329,27 +272,12 @@ class Diffusion(nn.Module):
 
         return x_0,matrixout
 
-class TimeFeatureEmbedding(nn.Module):
-    def __init__(self, d_model, embed_type='timeF', freq='h'):
-        super(TimeFeatureEmbedding, self).__init__()
-
-        freq_map = {'h':4, 't':5, 's':6, 'm':1, 'a':1, 'w':2, 'd':3, 'b':3}
-        d_inp = freq_map[freq]
-        self.embed = nn.Linear(d_inp, d_model)
-    
-    def forward(self, x):
-        return self.embed(x)
-
 class NRU_RBN(nn.Module):
-    def __init__(self, enc_in, dec_in, c_out, seq_len, label_len, out_len,n_times, d_model=512, d_ff=512, 
-                dropout=0.0, embed='fixed', freq='h', activation='gelu', 
-                output_attention = False,likeloss=True,
-                device=torch.device('cuda:0'),beta_init=None):
+    def __init__(self, enc_in, c_out,label_len, out_len,n_times, d_model=512, freq='h', device=torch.device('cuda:0')):
         super(NRU_RBN, self).__init__()
 
         self.d_model=d_model
         self.pred_len = out_len
-        self.likeloss = likeloss
         self.label_len=label_len
         self.c_out = c_out
         self.enc_in=enc_in
@@ -358,21 +286,16 @@ class NRU_RBN(nn.Module):
         freq_map = {'h':4, 't':5, 's':6, 'm':1, 'a':1, 'w':2, 'd':3, 'b':3, 'e':0}
         timefeatureNos = freq_map[freq]
         self.timefeatureNos=timefeatureNos
-        beta_minmax=[1e-4, 0.02]
+        beta_minmax=[1e-4, 2e-2]
         n_layers =4
         hidden_dim = d_model
         hidden_dims = [hidden_dim for _ in range(n_layers)]
-
-        if isinstance(beta_init, np.ndarray):
-            self._beta = 1e-4
-        else:
-            self._beta = 1e-4
         
-        self.model = Denoiser(image_resolution=(self.pred_len,d_ff, 2),
+        self.model = Denoiser(image_resolution=(self.pred_len,d_model, 2),
                  hidden_dims=hidden_dims, 
                  diffusion_time_embedding_dim=hidden_dim,
                  n_times=self.n_times).to(device)
-        self.diffusion = Diffusion(self.model,n_times=self.n_times,featurein=enc_in, input_size=enc_in+timefeatureNos,pred_len=self.pred_len,label_len=self.label_len,d_ff=d_ff, beta_minmax=beta_minmax,freq=freq, device=self.device).to(self.device)
+        self.diffusion = Diffusion(self.model,n_times=self.n_times, input_size=enc_in+timefeatureNos,pred_len=self.pred_len,label_len=self.label_len,d_ff=d_model, beta_minmax=beta_minmax,freq=freq, device=self.device).to(self.device)
 
     def forward(self,inlabel, x_mark_dec,flag):
 
@@ -383,23 +306,20 @@ class NRU_RBN(nn.Module):
             else:
                 x_enccat=torch.concat((inlabel,x_mark_dec),2)
         if flag=='train':
-            epsilon, pred_epsilon,x_zeros,noisy_label,matrixout,nonnmatrix,m2w=self.diffusion(x_enccat,"train1")
+            epsilon, pred_epsilon,x_zeros,matrixout,nonnmatrix,m2w=self.diffusion(x_enccat,"train")
             outputs=0
-            noisy_label=0
-            #x_zeros[:,:,0]=x_zeros[:,:,0]+refshiftiny[:,-self.pred_len:,0]
             if self.timefeatureNos==0:
                 x_zeros=x_zeros
             else:
                 x_zeros=x_zeros[:,:,:-self.timefeatureNos]
         elif flag=='val':
             with torch.no_grad():
-                epsilon, pred_epsilon,x_zeros,noisy_label,matrixout,nonnmatrix,m2w=self.diffusion(x_enccat,"val")
+                epsilon, pred_epsilon,x_zeros,matrixout,nonnmatrix,m2w=self.diffusion(x_enccat,"val")
                 if self.timefeatureNos==0:
                     x_zeros=x_zeros
                 else:
                     x_zeros=x_zeros[:,:,:-self.timefeatureNos]
             outputs=0
-            noisy_label=0
         else:
             batch_size = inlabel.shape[0] 
             if self.timefeatureNos==0:
@@ -414,27 +334,26 @@ class NRU_RBN(nn.Module):
             else:
                 outputs=sampleres[:,:,:-self.timefeatureNos]
             x_zeros=0
-            noisy_label=0
             epsilon =0
             pred_epsilon=0
             matrixout=nonnmatrix
             m2w=0
-        return outputs,epsilon, pred_epsilon,x_zeros,noisy_label,matrixout,nonnmatrix,m2w
+        return outputs,epsilon, pred_epsilon,x_zeros,matrixout,nonnmatrix,m2w
 
 
 class Estimator(nn.Module):
-    def __init__(self, enc_in, dec_in, c_out, seq_len, label_len, out_len,freq, d_model=512, d_ff=512,
+    def __init__(self, enc_in, c_out,label_len, out_len,freq, d_model=512,
                 device=torch.device('cuda:0')):
         super(Estimator, self).__init__()
 
-        self.d_model=d_ff
+        self.d_model=d_model
         self.pred_len = out_len
         self.label_len=label_len
         self.c_out = c_out
         self.enc_in=enc_in
         self.device=device
-        self.MLP=nn.Linear(d_ff*2, enc_in)
-        self.MLPT=nn.Linear(d_ff*2,d_ff*2)
+        self.MLP=nn.Linear(d_model*2, enc_in)
+        self.MLPT=nn.Linear(d_model*2,d_model*2)
         self.act=nn.Softplus()
         self.relu=nn.ReLU()
         self.position=TemporalEmbedding(d_model=d_model, embed_type='fixed', freq=freq)
@@ -447,12 +366,8 @@ class Estimator(nn.Module):
         sigmaout=self.act(out)
         return sigmaout
     
-def vanilla_block(in_feat, out_feat, normalize=False, activation=None):
+def vanilla_block(in_feat, out_feat, activation=None):
     layers = [nn.Linear(in_feat, out_feat)]
-    if normalize:
-        layers.append(nn.LayerNorm(out_feat))
-    # 0.2 was used in DCGAN, I experimented with other values like 0.5 didn't notice significant change
     layers.append(nn.SiLU() if activation is None else activation)
-        #if activation !=None:
-        #    layers.append(activation)
+
     return layers
