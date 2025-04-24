@@ -1,7 +1,7 @@
 from data.data_loader import Dataset_ETT_hour,Dataset_ETT_day,Dataset_ETT_minute
 from exp.exp_basic import Exp_Basic
-from models.model import NRU_RBN, Estimator
-from utils_NRU_RBN.tools import EarlyStopping,adjust_learning_rate
+from models.model import IL_DiffTSF, Estimator
+from utils_IL_DiffTSF.tools import EarlyStopping,adjust_learning_rate
 import numpy as np
 import pandas as pd
 import torch
@@ -13,27 +13,28 @@ from tqdm.notebook import tqdm
 import matplotlib.pyplot as plt
 import os
 import time
-from utils_NRU_RBN.common_utils import commonmetric
-from utils_NRU_RBN.tools import loss_fn_sigma,loss_fn
-from  utils_NRU_RBN.crps import crps_gaussian,crps_ensemble
+from utils_IL_DiffTSF.common_utils import commonmetric
+from utils_IL_DiffTSF.tools import loss_fn_sigma,loss_fn
+from  utils_IL_DiffTSF.crps import crps_gaussian,crps_ensemble
 import warnings
 warnings.filterwarnings('ignore')
 
-class Exp_NRU_RBN(Exp_Basic):
+class Exp_IL_DiffTSF(Exp_Basic):
     def __init__(self, args):
-        super(Exp_NRU_RBN, self).__init__(args)
+        super(Exp_IL_DiffTSF, self).__init__(args)
     
     def _build_model(self):
         model_dict = {
-            'Diff_TS':NRU_RBN,
+            'IL_DiffTSF':IL_DiffTSF,
         }
-        if self.args.model=='Diff_TS':
+        if self.args.model=='IL_DiffTSF':
             model = model_dict[self.args.model](
                 self.args.enc_in,
                 self.args.c_out, 
                 self.args.label_len,
                 self.args.pred_len,
-                self.args.n_times, 
+                self.args.n_times,
+                self.args.offset,
                 self.args.d_model, 
                 self.args.freq,
                 self.device
@@ -73,7 +74,7 @@ class Exp_NRU_RBN(Exp_Basic):
         if flag == 'test':
             shuffle_flag = False; drop_last = False; batch_size = args.batch_size; freq=args.freq
         elif flag =='val':
-            shuffle_flag = False; drop_last = False; batch_size = args.batch_size; freq=args.freq
+            shuffle_flag = True; drop_last = False; batch_size = args.batch_size; freq=args.freq
         else:
             shuffle_flag = True; drop_last = False; batch_size = args.batch_size; freq=args.freq
 
@@ -94,7 +95,9 @@ class Exp_NRU_RBN(Exp_Basic):
             batch_size=batch_size,
             shuffle=shuffle_flag,
             num_workers=args.num_workers,
-            drop_last=drop_last)
+            drop_last=drop_last,
+            pin_memory=True,       
+            persistent_workers=True)
 
         return data_set, data_loader
 
@@ -227,13 +230,12 @@ class Exp_NRU_RBN(Exp_Basic):
             tvalregloss.append(valreglosslist)
 
             if train1==True:
-
                 early_stopping(vali_loss, self.model, best_model_path)
                 train1 =not early_stopping.early_stop 
-                #adjust_learning_rate(model_optim, epoch + 1, self.args)
+                adjust_learning_rate(model_optim, epoch + 1, self.args)
             else:
                 early_stopping2(vali_loss2,self.estimatormodel, best_model_pathest)
-                #adjust_learning_rate(estimatormodel_optim, epoch + 1, self.args)
+                adjust_learning_rate(estimatormodel_optim, epoch + 1, self.args)
 
             if early_stopping.early_stop and early_stopping2.early_stop:
                 print("Early stopping")
@@ -389,6 +391,7 @@ class Exp_NRU_RBN(Exp_Basic):
 
       batch_y = batch_y.float().to(self.device)
       batch_yin = batch_yin.float().to(self.device)
+      
       output,epsilon, pred_epsilon,x_zeros,matrixout,nonnmatrix,m2w= self.model(batch_yin, batch_y_mark,flag)
       batch_y = torch.concat((batch_y,batch_y_mark),2).to(self.device)
       

@@ -1,4 +1,4 @@
-Diff_TS_168_24_dETTh1_ftM_ll168_pl24_dm256_n_times_100_ii_100
-['0_predlen:24,CRPS_L:1,AVE:0.309±0.0']
-['0_predlen:24,MSE_L:1,AVE:0.38±0.0']
-['0_predlen:24,MAE_L:1,AVE:0.429±0.0']
+Diff_TS_168_24_dETTh1_ftM_ll168_pl24_dm256_n_times_100_ii_100_OF_False
+['0_predlen:24,CRPS_L:1,AVE:0.292±0.0']
+['0_predlen:24,MSE_L:1,AVE:0.352±0.0']
+['0_predlen:24,MAE_L:1,AVE:0.401±0.0']

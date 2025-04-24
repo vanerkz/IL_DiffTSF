@@ -49,7 +49,7 @@ class ConvBlock(nn.Conv2d):
             y=x+time_embedding
         else:
             y = super(ConvBlock, self).forward(x)
-        #y = self.group_norm(y) if self.group_norm is not None else y
+        y = self.group_norm(y) if self.group_norm is not None else y
         y = self.activation_fn(y) if self.activation_fn is not None else y
         
         return y
@@ -99,7 +99,7 @@ class Diffusion(nn.Module):
     def __init__(self, model, n_times, input_size,pred_len,label_len,d_ff,beta_minmax=[1e-4, 2e-2],freq='t', device='cuda'):
     
         super(Diffusion, self).__init__()
-        freq_map = {'h':4, 't':5, 's':6, 'm':1, 'a':1, 'w':2, 'd':3, 'b':3, 'e':0}
+        freq_map = {'1H':4, '15min':5,'1D':3}
         timefeatureNos = freq_map[freq]
         self.label_len=label_len
         self.pred_len=pred_len
@@ -107,13 +107,15 @@ class Diffusion(nn.Module):
         self.n_times = n_times
         self.model = model
         self.d_ff=d_ff
+        self.device=device
         beta_1, beta_T = beta_minmax
-        self.sqrt_betas = torch.sqrt(torch.linspace(start=beta_1, end=beta_T, steps=n_times).to(device))      
-        self.alphas = 1 - torch.linspace(start=beta_1, end=beta_T, steps=n_times).to(device)
-        self.sqrt_alphas = torch.sqrt(self.alphas).to(device)
-        self.sqrt_one_minus_alpha_bars = torch.sqrt(1-torch.cumprod(self.alphas, dim=0)).to(device)
-        self.sqrt_alpha_bars = torch.sqrt(torch.cumprod(self.alphas, dim=0)).to(device)
-        self.device = device
+        self.betas = torch.linspace(start=beta_1, end=beta_T, steps=n_times).to(self.device)
+        self.sqrt_betas = torch.sqrt(self.betas).to(self.device)
+        self.alphas = 1 - self.betas
+        self.sqrt_alphas = torch.sqrt(self.alphas).to(self.device)
+        self.sqrt_alpha_bars = torch.sqrt(torch.cumprod(self.alphas, dim=0)).to(self.device)
+        self.sqrt_one_minus_alpha_bars = torch.sqrt(1 - torch.cumprod(self.alphas, dim=0)).to(self.device)
+
         self.MLP2=nn.Linear(input_size, d_ff)
         self.MLP2.weight=nn.init.orthogonal_(self.MLP2.weight)
         
@@ -209,9 +211,9 @@ class Diffusion(nn.Module):
                 param.requires_grad =False
         pred_epsilon = self.model(torch.concat((perturbed_images.unsqueeze(1),context.unsqueeze(1)),1),t)
         nonnmatrix=(perturbed_images-(pred_epsilon.squeeze(1)*sqrt_one_minus_alpha_bar))/sqrt_alpha_bar
-        nonnmatrix=nonnmatrix.clamp(min=-0.9999,max=0.9999)
+        nonnmatrix=nonnmatrix.clamp(-1 + 1e-6, 1 - 1e-6)
         pred_epsilon=pred_epsilon.squeeze(1)
-        matrixout=perturbed_images.clamp(min=-0.9999,max=0.9999)
+        matrixout=perturbed_images.clamp(-1 + 1e-6, 1 - 1e-6)
         x_t=torch.atanh(nonnmatrix)
         w=self.MLP2.weight
         b=self.MLP2.bias
@@ -248,12 +250,12 @@ class Diffusion(nn.Module):
     
         x_t_minus_1 = 1 / sqrt_alpha * (x_t - (1-alpha)/sqrt_one_minus_alpha_bar*epsilon_pred) + sqrt_beta*z
 
-        return x_t_minus_1.clamp(min=-0.9999,max=0.9999)
+        return x_t_minus_1.clamp(-1 + 1e-6 ,1 - 1e-6)
                 
     def sample(self, N,inlabel):       
         x_t = torch.randn((N, self.pred_len, self.d_ff)).to(self.device)
         for t in range(self.n_times-1, -1, -1): 
-            torch.cuda.empty_cache()
+
             tt = torch.tensor([t]).repeat_interleave(N, dim=0).long().to(self.device)
             label=inlabel[:,:self.label_len,:]
             embedlabel=self.enc_embedding(label,tt.unsqueeze(1).repeat_interleave(self.label_len, dim=1))
@@ -272,18 +274,19 @@ class Diffusion(nn.Module):
 
         return x_0,matrixout
 
-class NRU_RBN(nn.Module):
-    def __init__(self, enc_in, c_out,label_len, out_len,n_times, d_model=512, freq='h', device=torch.device('cuda:0')):
-        super(NRU_RBN, self).__init__()
+class IL_DiffTSF(nn.Module):
+    def __init__(self, enc_in, c_out,label_len, out_len,n_times,offset, d_model=512, freq='h', device=torch.device('cuda:0')):
+        super(IL_DiffTSF, self).__init__()
 
         self.d_model=d_model
         self.pred_len = out_len
         self.label_len=label_len
         self.c_out = c_out
+        self.offset=offset
         self.enc_in=enc_in
         self.device=device
         self.n_times=n_times
-        freq_map = {'h':4, 't':5, 's':6, 'm':1, 'a':1, 'w':2, 'd':3, 'b':3, 'e':0}
+        freq_map = {'1H':4, '15min':5,'1D':3}
         timefeatureNos = freq_map[freq]
         self.timefeatureNos=timefeatureNos
         beta_minmax=[1e-4, 2e-2]
@@ -298,7 +301,7 @@ class NRU_RBN(nn.Module):
         self.diffusion = Diffusion(self.model,n_times=self.n_times, input_size=enc_in+timefeatureNos,pred_len=self.pred_len,label_len=self.label_len,d_ff=d_model, beta_minmax=beta_minmax,freq=freq, device=self.device).to(self.device)
 
     def forward(self,inlabel, x_mark_dec,flag):
-
+        offset=self.offset
         if flag=='train' or flag== 'val' :
             batch_size = inlabel.shape[0]
             if self.timefeatureNos==0:
@@ -312,6 +315,10 @@ class NRU_RBN(nn.Module):
                 x_zeros=x_zeros
             else:
                 x_zeros=x_zeros[:,:,:-self.timefeatureNos]
+            if offset:
+                ref=inlabel[:,-self.pred_len-1:-self.pred_len,:]
+                pred=x_zeros[:,0:1,:]
+                outputs=x_zeros+(ref-pred)
         elif flag=='val':
             with torch.no_grad():
                 epsilon, pred_epsilon,x_zeros,matrixout,nonnmatrix,m2w=self.diffusion(x_enccat,"val")
@@ -320,6 +327,10 @@ class NRU_RBN(nn.Module):
                 else:
                     x_zeros=x_zeros[:,:,:-self.timefeatureNos]
             outputs=0
+            if offset:
+                ref=inlabel[:,-self.pred_len-1:-self.pred_len,:]
+                pred=x_zeros[:,0:1,:]
+                outputs=x_zeros+(ref-pred)
         else:
             batch_size = inlabel.shape[0] 
             if self.timefeatureNos==0:
@@ -333,6 +344,11 @@ class NRU_RBN(nn.Module):
                 outputs=sampleres
             else:
                 outputs=sampleres[:,:,:-self.timefeatureNos]
+            
+            if offset:
+                ref=inlabel[:,-self.pred_len-1:-self.pred_len,:]
+                pred=outputs[:,0:1,:]
+                outputs=outputs+(ref-pred)
             x_zeros=0
             epsilon =0
             pred_epsilon=0

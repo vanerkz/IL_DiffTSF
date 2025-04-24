@@ -2,20 +2,16 @@ import os
 import numpy as np
 import pandas as pd
 
-import torch
-from torch.utils.data import Dataset, DataLoader
-# from sklearn.preprocessing import StandardScaler
-import matplotlib.pyplot as plt
-from utils_NRU_RBN.tools import StandardScaler
-from utils_NRU_RBN.timefeatures import time_features
+from torch.utils.data import Dataset
+from utils_IL_DiffTSF.tools import StandardScaler
+from utils_IL_DiffTSF.timefeatures import time_features
 import warnings
-import math
 warnings.filterwarnings('ignore')
 
 class Dataset_ETT_hour(Dataset):
     def __init__(self, root_path, flag='train', size=None, 
                  features='S', data_path='ETTh1.csv', 
-                 target='OT', scale=True, inverse=False, timeenc=0, freq='h'):
+                 target='OT', scale=True, inverse=False, timeenc=0, freq='1H'):
         # size [seq_len, label_len, pred_len]
         # info
 
@@ -73,7 +69,7 @@ class Dataset_ETT_hour(Dataset):
         self.data_stamp = data_stamp
 
     def __getitem__(self, index):
-        if self.set_type ==2 and self.features=='M':
+        if (self.set_type ==2) and self.features=='M':
             indexraw = np.arange(0,len(self.data_x) - self.label_len- self.pred_len  + 1,self.pred_len//4)
             s_begin = indexraw[index]
         else:
@@ -92,7 +88,7 @@ class Dataset_ETT_hour(Dataset):
         return seq_x, seq_y, seq_x_mark, seq_y_mark,date_stamp_raw
     
     def __len__(self):
-            if self.set_type ==2 and self.features=='M':
+            if (self.set_type ==2) and self.features=='M':
                 out=len(np.arange(0,len(self.data_x)- self.label_len- self.pred_len + 1,self.pred_len//4))
             else:
                 out=len(self.data_x) - self.label_len- self.pred_len + 1
@@ -104,7 +100,7 @@ class Dataset_ETT_hour(Dataset):
 class Dataset_ETT_day(Dataset):
     def __init__(self, root_path, flag='train', size=None, 
                  features='S', data_path='ETTh1.csv', 
-                 target='OT', scale=True, inverse=False, timeenc=0, freq='D'):
+                 target='OT', scale=True, inverse=False, timeenc=0, freq='1D'):
         # size [seq_len, label_len, pred_len]
         # info
         """if size == None:
@@ -168,7 +164,7 @@ class Dataset_ETT_day(Dataset):
         self.data_stamp = data_stamp
 
     def __getitem__(self, index):
-        if self.set_type ==2 and self.features=='M':
+        if (self.set_type ==2) and self.features=='M':
             indexraw = np.arange(0,len(self.data_x) - self.label_len- self.pred_len  + 1,self.pred_len//4)
             s_begin = indexraw[index]
         else:
@@ -189,7 +185,7 @@ class Dataset_ETT_day(Dataset):
         return seq_x, seq_y, seq_x_mark, seq_y_mark,date_stamp_raw
     
     def __len__(self):
-        if self.set_type ==2 and self.features=='M':
+        if (self.set_type ==2) and self.features=='M':
                 out=len(np.arange(0,len(self.data_x) - self.label_len- self.pred_len + 1,self.pred_len//4))
         else:
                 out=len(self.data_x) - self.label_len- self.pred_len + 1
@@ -201,7 +197,7 @@ class Dataset_ETT_day(Dataset):
 class Dataset_ETT_minute(Dataset):
     def __init__(self, root_path, flag='train', size=None, 
                  features='S', data_path='ETTh1.csv', 
-                 target='OT', scale=True, inverse=False, timeenc=0, freq='t'):
+                 target='OT', scale=True, inverse=False, timeenc=0, freq='15min'):
         # size [seq_len, label_len, pred_len]
         # info
         self.label_len = size[0]
@@ -262,7 +258,7 @@ class Dataset_ETT_minute(Dataset):
     def __getitem__(self, index):
 
         
-        if self.set_type ==2 and self.features=='M':
+        if (self.set_type ==2) and self.features=='M':
             indexraw = np.arange(0,len(self.data_x) - self.label_len- self.pred_len  + 1,self.pred_len//4)
             s_begin = indexraw[index]
         else:
@@ -281,7 +277,7 @@ class Dataset_ETT_minute(Dataset):
         return seq_x, seq_y, seq_x_mark, seq_y_mark,date_stamp_raw
     
     def __len__(self):
-            if self.set_type ==2 and self.features=='M':
+            if (self.set_type ==2) and self.features=='M':
                 out=len(np.arange(0,len(self.data_x) - self.label_len- self.pred_len + 1,self.pred_len//4))
             else:
                 out=len(self.data_x) - self.label_len- self.pred_len + 1

@@ -1,4 +1,4 @@
-Diff_TS_336_168_delectrans_ftM_sl336_ll336_pl168_dm256_df256_ebtimeF_0_lossreg_True_n_times_100_ii_0.1
-['0_predlen:168,CRPS_L:1,AVE:0.222±0.0']
-['0_predlen:168,MSE_L:1,AVE:0.181±0.0']
-['0_predlen:168,MAE_L:1,AVE:0.304±0.0']
+Diff_TS_336_168_delectrans_ftM_ll336_pl168_dm256_n_times_100_ii_100_OF_False
+['0_predlen:168,CRPS_L:1,AVE:0.249±0.0']
+['0_predlen:168,MSE_L:1,AVE:0.214±0.0']
+['0_predlen:168,MAE_L:1,AVE:0.339±0.0']

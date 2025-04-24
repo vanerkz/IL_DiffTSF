@@ -1,0 +1,4 @@
+Diff_TS_720_336_dexchange_ftM_ll720_pl336_dm256_n_times_100_ii_100_OF_True
+['0_predlen:336,CRPS_L:1,AVE:0.681±0.0']
+['0_predlen:336,MSE_L:1,AVE:0.928±0.0']
+['0_predlen:336,MAE_L:1,AVE:0.803±0.0']

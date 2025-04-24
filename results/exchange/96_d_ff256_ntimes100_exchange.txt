@@ -1,4 +1,4 @@
-Diff_TS_168_96_dexchange_ftM_sl168_ll168_pl96_dm256_df256_ebtimeF_0_lossreg_True_n_times_100_ii_100
-['0_predlen:96,CRPS_L:1,AVE:0.527±0.0']
-['0_predlen:96,MSE_L:1,AVE:0.765±0.0']
-['0_predlen:96,MAE_L:1,AVE:0.768±0.0']
+Diff_TS_168_96_dexchange_ftM_ll168_pl96_dm256_n_times_100_ii_100_OF_True
+['0_predlen:96,CRPS_L:1,AVE:0.241±0.0']
+['0_predlen:96,MSE_L:1,AVE:0.187±0.0']
+['0_predlen:96,MAE_L:1,AVE:0.316±0.0']

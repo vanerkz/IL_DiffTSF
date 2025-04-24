@@ -61,11 +61,10 @@ class TemporalEmbedding(nn.Module):
         super(TemporalEmbedding, self).__init__()
 
         minute_size = 4; hour_size = 24
-        weekday_size = 7; day_size = 31; month_size = 12
+        weekday_size = 7; day_size = 32; month_size = 13
         self.freq=freq
         Embed = FixedEmbedding if embed_type=='fixed' else nn.Embedding
-        if freq=='t':
-            self.minute_embed = Embed(minute_size, d_model)
+        self.minute_embed = Embed(minute_size, d_model)
         self.hour_embed = Embed(hour_size, d_model)
         self.weekday_embed = Embed(weekday_size, d_model)
         self.day_embed = Embed(day_size, d_model)
@@ -74,8 +73,8 @@ class TemporalEmbedding(nn.Module):
     def forward(self, x):
         x = x.long()
         
-        minute_x = self.minute_embed(x[:,:,4]) if self.freq=='t' else 0.
-        if self.freq!='d':
+        minute_x = self.minute_embed(x[:,:,4]) if self.freq=='15min' else 0.
+        if self.freq!='1D':
             hour_x = self.hour_embed(x[:,:,3])
         else:
             hour_x=0
@@ -85,16 +84,6 @@ class TemporalEmbedding(nn.Module):
         
         return hour_x + weekday_x + day_x + month_x + minute_x
 
-class TimeFeatureEmbedding(nn.Module):
-    def __init__(self, d_model, embed_type='timeF', freq='h'):
-        super(TimeFeatureEmbedding, self).__init__()
-
-        freq_map = {'h':4, 't':5, 's':6, 'm':1, 'a':1, 'w':2, 'd':3, 'b':3}
-        d_inp = freq_map[freq]
-        self.embed = nn.Linear(d_inp, d_model)
-    
-    def forward(self, x):
-        return self.embed(x)
     
 class SinusoidalPosEmb(nn.Module):
     def __init__(self, dim):
