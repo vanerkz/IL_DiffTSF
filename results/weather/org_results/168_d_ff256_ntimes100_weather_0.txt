@@ -1,0 +1,4 @@
+IL_DiffTSF_336_168_dweather_ftM_ll336_pl168_dm256_n_times_100_ii_0_OF_False
+['0_predlen:168,CRPS_L:1,AVE:3.867±0.0']
+['0_predlen:168,MSE_L:1,AVE:32.436±0.0']
+['0_predlen:168,MAE_L:1,AVE:4.262±0.0']

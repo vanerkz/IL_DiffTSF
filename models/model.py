@@ -46,6 +46,8 @@ class ConvBlock(nn.Conv2d):
         if residual:
             # in the paper, diffusion timestep embedding was only applied to residual blocks of U
             x = super(ConvBlock, self).forward(x)
+            print(x.shape)
+            print(time_embedding.shape)
             y=x+time_embedding
         else:
             y = super(ConvBlock, self).forward(x)
@@ -66,14 +68,6 @@ class Denoiser(nn.Module):
         
         self.in_project = ConvBlock(img_C, hidden_dims[0], kernel_size=1)
 
-        """self.time_project = nn.Sequential(
-                                 ConvBlock(diffusion_time_embedding_dim, hidden_dims[0], kernel_size=1, activation_fn=True),
-                                 ConvBlock(hidden_dims[0], hidden_dims[0], kernel_size=1))"""
-        """for idx in range(1, len(hidden_dims)):
-            self.time_project.append(nn.Sequential(
-                                 ConvBlock(diffusion_time_embedding_dim, hidden_dims[0], kernel_size=1, activation_fn=True),
-                                 ConvBlock(hidden_dims[0], 32, kernel_size=1)))  """   
-
         self.convs = nn.ModuleList([ConvBlock(in_channels=hidden_dims[0], out_channels=hidden_dims[0], kernel_size=kernel_size)])
         for idx in range(1, len(hidden_dims)):
             self.convs.append(ConvBlock(hidden_dims[idx-1], hidden_dims[idx], kernel_size=kernel_size, dilation=kernel_size**((idx-1)//2),
@@ -85,6 +79,7 @@ class Denoiser(nn.Module):
     def forward(self, perturbed_x, diffusion_timestep):
         y = perturbed_x
         diffusion_embedding = self.time_embedding(diffusion_timestep)
+        print(diffusion_embedding.shape)
         diffusion_embedding = diffusion_embedding.unsqueeze(-1).unsqueeze(-2)
         y = self.in_project(y)
         for i in range(1, len(self.convs)):
@@ -189,7 +184,6 @@ class Diffusion(nn.Module):
             self.MLP2.eval()
             for param in self.MLP2.parameters():
                 param.requires_grad =False
-
         embedlabel2=self.enc_embedding(label,t.unsqueeze(1).repeat_interleave(self.label_len, dim=1))
         result = self.encodervar(embedlabel2)
         resaroutnew=self.decoder_input(result)
@@ -197,7 +191,6 @@ class Diffusion(nn.Module):
         m2w=self.MLP2.weight
         x_zeros=self.MLP2(inlabel[:,-self.pred_len:,:])
         x_zeros=torch.tanh(x_zeros)
-
         perturbed_images,epsilon, sqrt_alpha_bar, sqrt_one_minus_alpha_bar  = self.make_noisy(x_zeros, t)
     
 
@@ -355,7 +348,12 @@ class IL_DiffTSF(nn.Module):
             matrixout=nonnmatrix
             m2w=0
         return outputs,epsilon, pred_epsilon,x_zeros,matrixout,nonnmatrix,m2w
+    
+def vanilla_block(in_feat, out_feat, activation=None):
+    layers = [nn.Linear(in_feat, out_feat)]
+    layers.append(nn.SiLU() if activation is None else activation)
 
+    return layers
 
 class Estimator(nn.Module):
     def __init__(self, enc_in, c_out,label_len, out_len,freq, d_model=512,
@@ -368,22 +366,21 @@ class Estimator(nn.Module):
         self.c_out = c_out
         self.enc_in=enc_in
         self.device=device
-        self.MLP=nn.Linear(d_model*2, enc_in)
-        self.MLPT=nn.Linear(d_model*2,d_model*2)
-        self.act=nn.Softplus()
-        self.relu=nn.ReLU()
+
+        modules = []
+        modules.append(
+            nn.Sequential(
+                    nn.Linear(d_model*2,d_model*2),
+                    nn.ReLU(),
+                    nn.Linear(d_model*2, enc_in),
+                    nn.Softplus())
+        )
+        self.EST = nn.Sequential(*modules)
         self.position=TemporalEmbedding(d_model=d_model, embed_type='fixed', freq=freq)
         
     def forward(self, hiddenmatrix,temporalenc):
         temporalenc=self.position(temporalenc[:,-self.pred_len:])
-        total= torch.concat((hiddenmatrix,temporalenc),2)
-        total=self.relu(self.MLPT(total))
-        out=self.MLP(total)
-        sigmaout=self.act(out)
+        H_y0_w_C= torch.concat((hiddenmatrix,temporalenc),2)
+        sigmaout=self.EST(H_y0_w_C)
         return sigmaout
     
-def vanilla_block(in_feat, out_feat, activation=None):
-    layers = [nn.Linear(in_feat, out_feat)]
-    layers.append(nn.SiLU() if activation is None else activation)
-
-    return layers

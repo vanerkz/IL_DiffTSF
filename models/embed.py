@@ -112,6 +112,5 @@ class DataEmbedding(nn.Module):
             x =self.linear(x)+self.diffEmbed(t)
         else:
             x =self.linear(x)+self.temporal_embedding(x[:,:,-self.timeemdnos:])+self.diffEmbed(t)
-        
         return x
     

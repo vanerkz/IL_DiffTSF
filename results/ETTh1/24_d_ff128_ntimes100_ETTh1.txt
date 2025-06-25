@@ -1,0 +1,4 @@
+IL_DiffTSF_168_24_dETTh1_ftM_ll168_pl24_dm128_n_times_100_ii_0_OF_False
+['0_predlen:24,CRPS_L:1,AVE:0.86±0.0']
+['0_predlen:24,MSE_L:1,AVE:2.226±0.0']
+['0_predlen:24,MAE_L:1,AVE:1.085±0.0']

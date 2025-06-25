@@ -10,11 +10,12 @@ def adjust_learning_rate(optimizer, epoch, args):
             2: 5e-5, 4: 1e-5, 6: 5e-6, 8: 1e-6, 
             10: 5e-7, 15: 1e-7, 20: 5e-8
         }
-    if epoch in lr_adjust.keys():
-        lr = lr_adjust[epoch]
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr
-        print('Updating learning rate to {}'.format(lr))
+    if args.lradj!="none":
+        if epoch in lr_adjust.keys():
+            lr = lr_adjust[epoch]
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr
+            print('Updating learning rate to {}'.format(lr))
 
 
 def loss_fn(sigmaout,labels,x_zeros,pred_len):
@@ -26,7 +27,7 @@ def loss_fn(sigmaout,labels,x_zeros,pred_len):
 def loss_fn_sigma(epsilon, pred_epsilon,m2w,regvalue):
     loss = torch.nn.MSELoss()
     sym2 = torch.mm(m2w.T, m2w) - torch.eye(m2w.shape[1], device=m2w.device)
-    spectral_norm_difference = torch.linalg.norm(sym2, ord=2)
+    spectral_norm_difference = torch.linalg.matrix_norm(sym2, ord=2)
     dataloss=loss(epsilon,pred_epsilon)
     regloss=regvalue*spectral_norm_difference
     distribution=dataloss+regloss

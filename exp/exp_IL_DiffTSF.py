@@ -233,11 +233,11 @@ class Exp_IL_DiffTSF(Exp_Basic):
                 early_stopping(vali_loss, self.model, best_model_path)
                 train1 =not early_stopping.early_stop 
                 adjust_learning_rate(model_optim, epoch + 1, self.args)
-            else:
+            elif self.args.train_est:
                 early_stopping2(vali_loss2,self.estimatormodel, best_model_pathest)
                 adjust_learning_rate(estimatormodel_optim, epoch + 1, self.args)
 
-            if early_stopping.early_stop and early_stopping2.early_stop:
+            if early_stopping.early_stop and (early_stopping2.early_stop or not self.args.train_est):
                 print("Early stopping")
                 break
             epoch+=1
@@ -263,9 +263,9 @@ class Exp_IL_DiffTSF(Exp_Basic):
                 if os.path.exists(best_model_pathest):
                     self.estimatormodel.load_state_dict(torch.load(best_model_pathest))
                 else:
-                    print("no model for estimatormodel")
+                    print("No model for Stage 2")
             else:
-                print("No File")
+                print("No model for Stage 1")
         preds = None
         trues = None
         sigmaouts = None
@@ -281,14 +281,14 @@ class Exp_IL_DiffTSF(Exp_Basic):
             if sample:
                 for i in tqdm(range(self.args.sampling_times),leave=False):
                     pred, true,_, _, _,batch_yorg,_,nonnmatrix,_= self._process_one_batch(
-                        test_data, batch_x, batch_y, batch_x_mark, batch_y_mark,"test")
+                        batch_x, batch_y, batch_x_mark, batch_y_mark,"test")
+                    pred=pred.unsqueeze(0)
                     if predsample is None:
                         predsample=pred.detach().cpu().numpy()
                     else:
                         predsample=np.concatenate((predsample,pred.detach().cpu().numpy()),axis=0)
-                b,i,s,p=predsample.shape
-                
-                pred=np.median(predsample[:,:,-self.args.pred_len:,:], axis=0)
+      
+                pred=np.mean(predsample[:,:,-self.args.pred_len:,:], axis=0)
                 if sigmaoutbtmfull is None:
                     sigmaouttopfull=np.percentile(predsample[:,:,-self.args.pred_len:,:],95, axis=0)
                     sigmaoutbtmfull=np.percentile(predsample[:,:,-self.args.pred_len:,:],10,axis=0)
@@ -304,7 +304,7 @@ class Exp_IL_DiffTSF(Exp_Basic):
                 else:
                     sigmaouts=np.concatenate((sigmaouts,sigma.detach().cpu().numpy()),axis=0)
                 pred=pred[:,-self.args.pred_len:,:]
-            
+
             true=true[:,-self.args.pred_len:,:self.args.c_out]
             if data_stamp is None:
                 data_stamp=data_stamp_batch.detach().cpu().numpy()
@@ -334,11 +334,11 @@ class Exp_IL_DiffTSF(Exp_Basic):
             print("preds shape:",preds.shape)
             print("sigmaouts shape:",sigmaouts.shape)
             crps_total=crps_gaussian(trues,preds,sigmaouts)
+            sigmaouts = sigmaouts.reshape(-1, sigmaouts.shape[-2],sigmaouts.shape[-1])
         else:
             print("sample shape:",predsamplefull.shape)
             crps_total=crps_ensemble(trues,predsamplefull,axis=0)
-        sigmaouts = sigmaouts.reshape(-1, sigmaouts.shape[-2],sigmaouts.shape[-1])
-                
+
         data_stamp = pd.to_datetime(np.array(data_stamp), unit='ns').values
         data_stamp = data_stamp.reshape(-1, data_stamp.shape[-2],data_stamp.shape[-1])
         crpsret=crps_total
@@ -371,11 +371,10 @@ class Exp_IL_DiffTSF(Exp_Basic):
             plt.show()"""
         sqtrue=trues.squeeze()
         sqpred=preds.squeeze()
-        sigmaouts=sigmaouts.squeeze()
         resultout = commonmetric(sqpred,sqtrue)
         print("mae,mse,rmse,mspe,shape")
         print(resultout)
-        return resultout,crpsret,sqtrue,sqpred,sigmaouts
+        return resultout,crpsret
     
 
     def _process_one_batch(self, batch_x, batch_y, batch_x_mark, batch_y_mark,flag):

@@ -1,0 +1,4 @@
+IL_DiffTSF_168_96_dexchange_ftM_ll168_pl96_dm256_n_times_100_ii_100_OF_True
+['0_predlen:96,CRPS_L:1,AVE:0.189±0.0']
+['0_predlen:96,MSE_L:1,AVE:0.113±0.0']
+['0_predlen:96,MAE_L:1,AVE:0.264±0.0']
