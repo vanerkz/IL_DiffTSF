@@ -1,4 +1,0 @@
-IL_DiffTSF_720_336_dETTh1_ftS_ll720_pl336_dm128_n_times_100_ii_0.1_OF_False
-['0_predlen:336,CRPS_L:1,AVE:0.197±0.0']
-['0_predlen:336,MSE_L:1,AVE:0.123±0.0']
-['0_predlen:336,MAE_L:1,AVE:0.278±0.0']

@@ -3,14 +3,12 @@ from exp.exp_basic import Exp_Basic
 from models.model import IL_DiffTSF, Estimator
 from utils_IL_DiffTSF.tools import EarlyStopping,adjust_learning_rate
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 from torch import optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from tqdm.notebook import tqdm
-import matplotlib.pyplot as plt
 import os
 import time
 from utils_IL_DiffTSF.common_utils import commonmetric
@@ -118,6 +116,7 @@ class Exp_IL_DiffTSF(Exp_Basic):
         reglosslist=[]
         total_loss = []
         total_loss2 = []
+        train_reconloss=[]
         crps_total=[]
         for i, (batch_x,batch_y,batch_x_mark,batch_y_mark,_) in enumerate(tqdm(vali_loader)):
             pred, true,epsilon, pred_epsilon, x_zeros,_,matrixout,nonnmatrix,m2w= self._process_one_batch(batch_x, batch_y, batch_x_mark, batch_y_mark,flag)
@@ -128,6 +127,8 @@ class Exp_IL_DiffTSF(Exp_Basic):
                 total_loss.append(loss.item())
                 reglosslist.append(regloss.item())
                 datalosslist.append(dataloss.item())
+                lossmse=nn.MSELoss()
+                train_reconloss.append(lossmse(x_zeros,true[:,-self.args.pred_len:,:self.args.c_out]).item())
                 if denoisebool:
                     loss2=loss_fn(sigmaout,true[:,:,:self.args.c_out],x_zeros.detach(),self.args.pred_len)
                     total_loss2.append(loss2.item())
@@ -136,14 +137,15 @@ class Exp_IL_DiffTSF(Exp_Basic):
             total_loss2 = np.mean(total_loss2)
             datalosslist = np.mean(datalosslist)
             reglosslist = np.mean(reglosslist)
-        return total_loss,total_loss2,crps_total,datalosslist,reglosslist
+            train_reconloss = np.mean(train_reconloss)
+        return total_loss,total_loss2,crps_total,datalosslist,reglosslist,train_reconloss
 
     def retdataloader(self,flag):
         return self._get_data(flag = 'train')
     
     def train(self, setting):
         kstep= int(32/self.args.batch_size)
-        train_data, train_loader = self._get_data(flag = 'train')
+        _, train_loader = self._get_data(flag = 'train')
         vali_data, vali_loader = self._get_data(flag = 'val')
         path = self.args.checkpoints
         best_model_path = os.path.join(path,setting+'.pth')
@@ -177,7 +179,8 @@ class Exp_IL_DiffTSF(Exp_Basic):
         tvalepochloss=[]
         tvaldataloss=[]
         tvalregloss=[]
-
+        tvalreconloss=[]
+        ttrain_reconloss=[]
         model_optim.zero_grad()
         estimatormodel_optim.zero_grad()
         iter_count=0
@@ -185,6 +188,8 @@ class Exp_IL_DiffTSF(Exp_Basic):
             train_loss = []
             data_loss = []
             reg_loss = []
+            train_reconloss=[]
+            res_list = None
             for i, (batch_x,batch_y,batch_x_mark,batch_y_mark,_) in enumerate(tqdm(train_loader)):
                 iter_count += 1
                 if train1:
@@ -205,14 +210,23 @@ class Exp_IL_DiffTSF(Exp_Basic):
                     train_loss.append(loss)
                     data_loss.append(dataloss.item())
                     reg_loss.append(regloss.item())
+                    lossmse=nn.MSELoss()
+                    train_reconloss.append(lossmse(x_zeros,true[:,-self.args.pred_len:,:self.args.c_out]).item())
                 else:
                     self.estimatormodel.train()
                     sigmaout=self.estimatormodel(nonnmatrix.detach(),batch_y_mark.float().to(self.device))
                     loss2=loss_fn(sigmaout,true[:,:,:self.args.c_out],x_zeros.detach(),self.args.pred_len)
+                    residual=true[:,-self.args.pred_len:,:self.args.c_out]-x_zeros.detach()
+                    if res_list is None:
+                        res_list=residual.detach().cpu().numpy()
+                    else:
+                        res_list=np.concatenate((res_list,residual.detach().cpu().numpy()),axis=0)
+                    
                     loss2.backward()
                     if (i+1) % kstep == 0 or (i+1) == len(train_loader):
                         estimatormodel_optim.step()  # update the weights only after accumulating k small batches
                         estimatormodel_optim.zero_grad()  # reset gradients for accumulation for the next large_batch
+            
             print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss))
             speed = (time.time()-time_now)/iter_count
             left_time = speed*((self.args.train_epochs - epoch)*train_steps - i)
@@ -220,14 +234,17 @@ class Exp_IL_DiffTSF(Exp_Basic):
             train_loss = np.average(train_loss)
             data_loss = np.average(data_loss)
             reg_loss = np.average(reg_loss)
+            train_reconloss = np.average(train_reconloss)
             tepochloss.append(train_loss)
             tdataloss.append(data_loss)
             tregloss.append(reg_loss)
+            ttrain_reconloss.append(train_reconloss)
 
-            vali_loss,vali_loss2,crps_total,valdatalosslist,valreglosslist = self.vali(vali_data, vali_loader,"val",not train1)
+            vali_loss,vali_loss2,crps_total,valdatalosslist,valreglosslist,valreconloss = self.vali(vali_data, vali_loader,"val",not train1)
             tvalepochloss.append(vali_loss)
             tvaldataloss.append(valdatalosslist)
             tvalregloss.append(valreglosslist)
+            tvalreconloss.append(valreconloss)
 
             if train1==True:
                 early_stopping(vali_loss, self.model, best_model_path)
@@ -241,17 +258,18 @@ class Exp_IL_DiffTSF(Exp_Basic):
                 print("Early stopping")
                 break
             epoch+=1
-
+        
         self.model.load_state_dict(torch.load(best_model_path))
         try:
             self.estimatormodel.load_state_dict(torch.load(best_model_pathest))
         except:
             print("no est")
-        return self.model,tepochloss,tdataloss,tregloss,tvalepochloss,tvaldataloss,tvalregloss
+        
+        return self.model,tepochloss,tdataloss,tregloss,tvalepochloss,tvaldataloss,tvalregloss,ttrain_reconloss,tvalreconloss
 
 
     def test(self, setting,evaluate=False):
-        test_data, test_loader = self._get_data(flag='test')
+        _, test_loader = self._get_data(flag='test')
         self.model.eval()
         path = self.args.checkpoints
         best_model_path = os.path.join(path,setting+'.pth')
@@ -277,6 +295,8 @@ class Exp_IL_DiffTSF(Exp_Basic):
         sample=self.args.sampling
         predsamplefull=None
         for i, (batch_x,batch_y,batch_x_mark,batch_y_mark,data_stamp_batch) in enumerate(tqdm(test_loader)):
+            """if i==100:
+                break"""
             predsample=None
             if sample:
                 for i in tqdm(range(self.args.sampling_times),leave=False):
@@ -296,7 +316,8 @@ class Exp_IL_DiffTSF(Exp_Basic):
                     sigmaouttopfull=np.concatenate((sigmaouttopfull,np.percentile(predsample[:,:,-self.args.pred_len:,:],95, axis=0)),axis=0)
                     sigmaoutbtmfull=np.concatenate((sigmaoutbtmfull,np.percentile(predsample[:,:,-self.args.pred_len:,:],10,axis=0)),axis=0)
             else:
-                pred, true,_, _, _,batch_yorg,_,nonnmatrix,_= self._process_one_batch(batch_x, batch_y, batch_x_mark, batch_y_mark,"test")
+
+                pred, true,_, _, _,batch_yorg,_,nonnmatrix, _= self._process_one_batch(batch_x, batch_y, batch_x_mark, batch_y_mark,"test")
                 sigmaout=self.estimatormodel(nonnmatrix,batch_y_mark.float().to(self.device))
                 sigma=sigmaout[:,:,:]
                 if sigmaouts is None:
@@ -304,7 +325,6 @@ class Exp_IL_DiffTSF(Exp_Basic):
                 else:
                     sigmaouts=np.concatenate((sigmaouts,sigma.detach().cpu().numpy()),axis=0)
                 pred=pred[:,-self.args.pred_len:,:]
-
             true=true[:,-self.args.pred_len:,:self.args.c_out]
             if data_stamp is None:
                 data_stamp=data_stamp_batch.detach().cpu().numpy()
@@ -329,6 +349,7 @@ class Exp_IL_DiffTSF(Exp_Basic):
             else:
                 trues=np.concatenate((trues,true.detach().cpu().numpy()),axis=0)
                 trues_full=np.concatenate((trues_full,batch_yorg.detach().cpu().numpy()),axis=0)
+
         print("trues shape:",trues.shape)    
         if not sample:
             print("preds shape:",preds.shape)
@@ -339,41 +360,14 @@ class Exp_IL_DiffTSF(Exp_Basic):
             print("sample shape:",predsamplefull.shape)
             crps_total=crps_ensemble(trues,predsamplefull,axis=0)
 
-        data_stamp = pd.to_datetime(np.array(data_stamp), unit='ns').values
-        data_stamp = data_stamp.reshape(-1, data_stamp.shape[-2],data_stamp.shape[-1])
         crpsret=crps_total
         print("test_CRPS_mean:"+str(np.mean(np.array(crps_total))),"test_CRPS_var:"+str(np.var(np.array(crps_total))))
         preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
         trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
         trues_full = trues_full.reshape(-1, trues_full.shape[-2], trues_full.shape[-1])
-        x,y,z=trues.shape
-        x,yfull,z=trues_full.shape
-        xp,yp,z=preds.shape
-        """for indexdisplay in range(x):
-            i=indexdisplay
-            print(i)
-            fig, ax = plt.subplots(z, 1, figsize=(30, 15))
-
-            for features in range(z):
-                print("index:"+str(i))
-                ff, yy,ss = preds[i,:,features], trues_full[i,-yp:,features],sigmaouts[i,:,features]
-                ff=ff.squeeze()
-                ss=ss.squeeze()
-                if True:
-                    #ax[features].fill_between(np.arange(yfull-yp,yfull),ff - 2 * ss,
-                    ax[features].fill_between(np.arange(yp),ff - 2 * ss,
-                                ff + 2 * ss, color='blue',
-                                alpha=0.2)
-                # ax[features].plot(np.arange(yfull), yy, color='g')
-                #ax[features].plot(np.arange(yfull-yp,yfull),ff, color='r')
-                ax[features].plot(np.arange(yp), yy, color='g')
-                ax[features].plot(np.arange(yp),ff, color='r')
-            plt.show()"""
         sqtrue=trues.squeeze()
         sqpred=preds.squeeze()
         resultout = commonmetric(sqpred,sqtrue)
-        print("mae,mse,rmse,mspe,shape")
-        print(resultout)
         return resultout,crpsret
     
 
@@ -390,7 +384,6 @@ class Exp_IL_DiffTSF(Exp_Basic):
 
       batch_y = batch_y.float().to(self.device)
       batch_yin = batch_yin.float().to(self.device)
-      
       output,epsilon, pred_epsilon,x_zeros,matrixout,nonnmatrix,m2w= self.model(batch_yin, batch_y_mark,flag)
       batch_y = torch.concat((batch_y,batch_y_mark),2).to(self.device)
       

@@ -1,4 +1,0 @@
-Diff_TS_168_96_dETTm2_ftM_ll168_pl96_dm256_n_times_100_ii_100_OF_False
-['0_predlen:96,CRPS_L:1,AVE:0.193±0.0']
-['0_predlen:96,MSE_L:1,AVE:0.14±0.0']
-['0_predlen:96,MAE_L:1,AVE:0.259±0.0']

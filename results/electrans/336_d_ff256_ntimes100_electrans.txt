@@ -1,4 +1,0 @@
-Diff_TS_720_336_delectrans_ftM_sl720_ll720_pl336_dm256_df256_ebtimeF_0_lossreg_True_n_times_100_ii_0.1
-['0_predlen:336,CRPS_L:1,AVE:0.233±0.0']
-['0_predlen:336,MSE_L:1,AVE:0.2±0.0']
-['0_predlen:336,MAE_L:1,AVE:0.327±0.0']

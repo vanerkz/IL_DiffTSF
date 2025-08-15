@@ -1,4 +1,0 @@
-Diff_TS_168_96_delectrans_ftM_sl168_ll168_pl96_dm256_df256_ebtimeF_0_lossreg_True_n_times_100_ii_0.1
-['0_predlen:96,CRPS_L:1,AVE:0.215±0.0']
-['0_predlen:96,MSE_L:1,AVE:0.176±0.0']
-['0_predlen:96,MAE_L:1,AVE:0.294±0.0']

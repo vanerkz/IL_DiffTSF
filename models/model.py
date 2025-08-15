@@ -46,8 +46,7 @@ class ConvBlock(nn.Conv2d):
         if residual:
             # in the paper, diffusion timestep embedding was only applied to residual blocks of U
             x = super(ConvBlock, self).forward(x)
-            print(x.shape)
-            print(time_embedding.shape)
+
             y=x+time_embedding
         else:
             y = super(ConvBlock, self).forward(x)
@@ -79,7 +78,7 @@ class Denoiser(nn.Module):
     def forward(self, perturbed_x, diffusion_timestep):
         y = perturbed_x
         diffusion_embedding = self.time_embedding(diffusion_timestep)
-        print(diffusion_embedding.shape)
+ 
         diffusion_embedding = diffusion_embedding.unsqueeze(-1).unsqueeze(-2)
         y = self.in_project(y)
         for i in range(1, len(self.convs)):
@@ -89,9 +88,10 @@ class Denoiser(nn.Module):
 
 
         return y
+        
   
 class Diffusion(nn.Module):
-    def __init__(self, model, n_times, input_size,pred_len,label_len,d_ff,beta_minmax=[1e-4, 2e-2],freq='t', device='cuda'):
+    def __init__(self, model, n_times, input_size,pred_len,label_len,d_ff,condk,beta_minmax=[1e-4, 2e-2],freq='t', device='cuda'):
     
         super(Diffusion, self).__init__()
         freq_map = {'1H':4, '15min':5,'1D':3}
@@ -110,32 +110,34 @@ class Diffusion(nn.Module):
         self.sqrt_alphas = torch.sqrt(self.alphas).to(self.device)
         self.sqrt_alpha_bars = torch.sqrt(torch.cumprod(self.alphas, dim=0)).to(self.device)
         self.sqrt_one_minus_alpha_bars = torch.sqrt(1 - torch.cumprod(self.alphas, dim=0)).to(self.device)
-
         self.MLP2=nn.Linear(input_size, d_ff)
-        self.MLP2.weight=nn.init.orthogonal_(self.MLP2.weight)
+        nn.init.orthogonal_(self.MLP2.weight)
         
         self.enc_embedding = DataEmbedding(self.input_size-timefeatureNos, timefeatureNos, d_ff,self.n_times, "fixed", freq)
         
-        modules = []
-        hidden_dims = [d_ff,d_ff*2,d_ff*2*2]
-        # MLP increase dimensions
-        modules.append(
-            nn.Sequential(
-                    *vanilla_block(hidden_dims[0], hidden_dims[1]),
-                    *vanilla_block(hidden_dims[1], hidden_dims[2])))
-        self.encodervar = nn.Sequential(*modules)
+        hidden_dims = [d_ff * (2 ** i) for i in range(condk)]  # automatically grows each layer
 
+        modules = []
+        for in_dim, out_dim in zip(hidden_dims[:-1], hidden_dims[1:]):
+            modules.extend(vanilla_block(in_dim, out_dim))  # extend because vanilla_block returns a list
+
+        self.encodervar = nn.Sequential(*modules)
         kernel_size=3
         dilation=1
         paddingno = kernel_size // 2 * dilation
         self.decoder_input = nn.Conv1d(in_channels=self.label_len, out_channels=pred_len, stride=1, kernel_size=kernel_size,padding=paddingno,dilation=dilation)
+        
         modules2 = []
-        
-        modules2.append(
-                    nn.Sequential(
-                    *vanilla_block(hidden_dims[2], hidden_dims[1]),
-                    *vanilla_block(hidden_dims[1], hidden_dims[0],activation=nn.Tanh())))
-        
+        # Reverse hidden_dims to go from largest → smallest
+        rev_dims = hidden_dims[::-1]
+
+        for idx, (in_dim, out_dim) in enumerate(zip(rev_dims[:-1], rev_dims[1:])):
+            # Last pair gets Tanh
+            if idx == len(rev_dims) - 2:
+                modules2.extend(vanilla_block(in_dim, out_dim, activation=nn.Tanh()))
+            else:
+                modules2.extend(vanilla_block(in_dim, out_dim))
+
         self.decodervar = nn.Sequential(*modules2)
 
     def make_noisy(self, x_zeros, t):
@@ -268,7 +270,7 @@ class Diffusion(nn.Module):
         return x_0,matrixout
 
 class IL_DiffTSF(nn.Module):
-    def __init__(self, enc_in, c_out,label_len, out_len,n_times,offset, d_model=512, freq='h', device=torch.device('cuda:0')):
+    def __init__(self, enc_in, c_out,label_len, out_len,n_times,offset,condk, d_model=512, freq='h', device=torch.device('cuda:0')):
         super(IL_DiffTSF, self).__init__()
 
         self.d_model=d_model
@@ -282,7 +284,7 @@ class IL_DiffTSF(nn.Module):
         freq_map = {'1H':4, '15min':5,'1D':3}
         timefeatureNos = freq_map[freq]
         self.timefeatureNos=timefeatureNos
-        beta_minmax=[1e-4, 2e-2]
+        beta_minmax=[1e-4, 2e-2] #org betamax 2e-2
         n_layers =4
         hidden_dim = d_model
         hidden_dims = [hidden_dim for _ in range(n_layers)]
@@ -291,7 +293,7 @@ class IL_DiffTSF(nn.Module):
                  hidden_dims=hidden_dims, 
                  diffusion_time_embedding_dim=hidden_dim,
                  n_times=self.n_times).to(device)
-        self.diffusion = Diffusion(self.model,n_times=self.n_times, input_size=enc_in+timefeatureNos,pred_len=self.pred_len,label_len=self.label_len,d_ff=d_model, beta_minmax=beta_minmax,freq=freq, device=self.device).to(self.device)
+        self.diffusion = Diffusion(self.model,n_times=self.n_times, input_size=enc_in+timefeatureNos,pred_len=self.pred_len,label_len=self.label_len,d_ff=d_model,condk=3, beta_minmax=beta_minmax,freq=freq, device=self.device).to(self.device)
 
     def forward(self,inlabel, x_mark_dec,flag):
         offset=self.offset
