@@ -91,7 +91,7 @@ class Denoiser(nn.Module):
         
   
 class Diffusion(nn.Module):
-    def __init__(self, model, n_times, input_size,pred_len,label_len,d_ff,condk,beta_minmax=[1e-4, 2e-2],freq='t', device='cuda'):
+    def __init__(self, model, n_times, input_size,pred_len,label_len,d_ff,beta_minmax=[1e-4, 2e-2],freq='t', device='cuda'):
     
         super(Diffusion, self).__init__()
         freq_map = {'1H':4, '15min':5,'1D':3}
@@ -115,7 +115,7 @@ class Diffusion(nn.Module):
         
         self.enc_embedding = DataEmbedding(self.input_size-timefeatureNos, timefeatureNos, d_ff,self.n_times, "fixed", freq)
         
-        hidden_dims = [d_ff * (2 ** i) for i in range(condk)]  # automatically grows each layer
+        hidden_dims = [d_ff * (2 ** i) for i in range(2)]  # automatically grows each layer
 
         modules = []
         for in_dim, out_dim in zip(hidden_dims[:-1], hidden_dims[1:]):
@@ -270,7 +270,7 @@ class Diffusion(nn.Module):
         return x_0,matrixout
 
 class IL_DiffTSF(nn.Module):
-    def __init__(self, enc_in, c_out,label_len, out_len,n_times,offset,condk, d_model=512, freq='h', device=torch.device('cuda:0')):
+    def __init__(self, enc_in, c_out,label_len, out_len,n_times,offset, d_model=512, freq='h', device=torch.device('cuda:0')):
         super(IL_DiffTSF, self).__init__()
 
         self.d_model=d_model
@@ -284,7 +284,7 @@ class IL_DiffTSF(nn.Module):
         freq_map = {'1H':4, '15min':5,'1D':3}
         timefeatureNos = freq_map[freq]
         self.timefeatureNos=timefeatureNos
-        beta_minmax=[1e-4, 2e-2] #org betamax 2e-2
+        beta_minmax=[1e-4, 2e-2] 
         n_layers =4
         hidden_dim = d_model
         hidden_dims = [hidden_dim for _ in range(n_layers)]
@@ -293,7 +293,7 @@ class IL_DiffTSF(nn.Module):
                  hidden_dims=hidden_dims, 
                  diffusion_time_embedding_dim=hidden_dim,
                  n_times=self.n_times).to(device)
-        self.diffusion = Diffusion(self.model,n_times=self.n_times, input_size=enc_in+timefeatureNos,pred_len=self.pred_len,label_len=self.label_len,d_ff=d_model,condk=3, beta_minmax=beta_minmax,freq=freq, device=self.device).to(self.device)
+        self.diffusion = Diffusion(self.model,n_times=self.n_times, input_size=enc_in+timefeatureNos,pred_len=self.pred_len,label_len=self.label_len,d_ff=d_model, beta_minmax=beta_minmax,freq=freq, device=self.device).to(self.device)
 
     def forward(self,inlabel, x_mark_dec,flag):
         offset=self.offset
